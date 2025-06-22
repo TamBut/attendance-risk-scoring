@@ -13,7 +13,8 @@ This project analyzes 13 years of regional attendance data (2011-2024) to identi
 
 **Attendance volatility explains 31% additional variance beyond socioeconomic factors alone** - increasing model performance from 63% to 94% R².
 
-Regional risk classification combining Equity Index (EQI) and attendance volatility
+
+![Regional risk classification combining Equity Index (EQI) and attendance volatility](plots/attendance_vs_EQI.png)
 
 ## Key Findings
 
