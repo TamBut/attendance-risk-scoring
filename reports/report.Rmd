@@ -1,0 +1,361 @@
+---
+title: "Attendance and Volatility in Aotearoa"
+author: "Tamara Butigan"
+date: '`r Sys.Date()`'
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(tidyverse)
+library(readxl)
+library(GGally)
+library(broom)
+library(janitor)
+library(zoo)
+library(writexl)
+library(patchwork)
+library(tinytex)
+```
+
+### Executive summary
+
+This report delivers a brief, data-driven analysis of school attendance patterns and volatility across Aotearoa’s education regions, with a strong focus on equity and risk. The analysis uses cleaned administrative datasets and robust statistical methods to uncover  trends and actionable insights for policymakers. The main findings are:
+
+**Volatility matters**: Beyond average attendance rates, volatility (instability in attendance) emerges as a key risk factor for student disengagement. Volatility accounts for about 37% of the variation explained by the combined risk model, with EQI accounting for around 63%. This underscores that while socioeconomic factors are the dominant influence, volatility (attendance instability) is a substantial additional predictor of disengagement risk.
+
+**Long-term challenges persist**: While recent years show modest recovery in attendance, most regions have not returned to pre-pandemic levels, and long-term trends remain largely negative.
+
+**Targeted risk typologies**: By combining Equity Index (EQI) scores and volatility, regions are classified into risk typologies—enabling more precise, evidence-based targeting of interventions.
+
+**Regional deep-dive**: Focused analysis of the Taranaki, Whanganui, Manawatu region reveals growing post-pandemic instability, underscoring the need for nuanced, localised responses. The usefulness of volatility as a regional metric is reduced for a region as diverse as Taranaki, as data aggregation can mask important trends.
+
+**Next steps**:
+
+>Analyzing volatility at the school level increases statistical power to detect meaningful variation, attributes local shocks accurately, and enables precise, equity-focused intervention. Aggregated regional volatility, while informative, can mask critical differences and emerging risks at the local level.
+More granular volatility would also allow for predictive modelling, since we could account for other relevant school-level variables, interventions and exogenous shocks.
+
+
+---
+
+# Exploratory Data Analysis (EDA)
+
+## Key Variables
+We examine four core variables at the regional level:
+- `avg_present`: Average attendance across available years
+- `volatility_present`: Instability in attendance rates, calculated using the coefficient of variation (CV): volatility_present = standard deviation of yearly attendance ÷ mean yearly attendance
+- `eqi_mean`: Average EQI score by region
+- `coef_variation`: Within-region variation in attendance
+
+```{r}
+regional_df <- read_excel("/Users/tamarabutigan/Desktop/attendance-risk-scoring/data_clean/merged_attendance_eqi.xlsx") %>%
+  select(eqi_mean, volatility_present, avg_present, coef_variation) %>%
+  drop_na()
+
+GGally::ggpairs(regional_df)
+```
+
+There is a **moderate negative association** between EQI and attendance, and **volatility appears to co-occur with lower average attendance**.
+
+---
+
+
+## Volatility adds predictive power beyond socioeconomic status
+
+We examined how well average attendance (`avg_present`) can be predicted by school socioeconomic status (`eqi_mean`) and attendance volatility (`volatility_present`), including their interaction.
+
+```{r regression-summary, echo=FALSE, message=FALSE}
+library(broom)
+library(readxl)
+library(dplyr)
+
+# Load data
+df_clean <- read_excel("/Users/tamarabutigan/Desktop/attendance-risk-scoring/data_clean/merged_attendance_eqi.xlsx") %>%
+  mutate(across(c(avg_present, eqi_mean, volatility_present), as.numeric))
+
+# Model 1: eqi only
+model_eqi <- lm(avg_present ~ eqi_mean, data = df_clean)
+
+# Model 2: eqi + volatility
+model_vol <- lm(avg_present ~ eqi_mean + volatility_present, data = df_clean)
+
+# Model 3: eqi, volatility + interaction
+model_int <- lm(avg_present ~ eqi_mean * volatility_present, data = df_clean)
+
+# Model summaries
+r2_eqi <- summary(model_eqi)$r.squared
+r2_vol <- summary(model_vol)$r.squared
+r2_int <- summary(model_int)$r.squared
+
+r2_table <- tibble(
+  Model = c("EQI only", "EQI + Volatility", "EQI + Interaction"),
+  R_squared = c(summary(model_eqi)$r.squared,
+                summary(model_vol)$r.squared,
+                summary(model_int)$r.squared)
+)
+
+print(r2_table)
+
+
+```
+
+>Socioeconomic status (EQI) alone explains about **63.5%** of variance in attendance.
+
+>Adding attendance volatility increases explained variance to **94.4%**, a substantial improvement of ~31 percentage points.
+
+>Including the interaction between EQI and volatility further improves model fit to **95.4%**.
+
+>This demonstrates that attendance volatility is a key additional risk factor for disengagement beyond socioeconomic disadvantage. Policy and interventions should consider not only average attendance levels but also the stability of attendance patterns.
+
+# Regional Attendance Trends
+
+We model term attendance percentage over time per education region, using different time windows for comparison:
+
+1. Long-Term Trend (2011–2024, excluding COVID)
+```{r}
+term_df <- read_excel("/Users/tamarabutigan/Desktop/attendance-risk-scoring/data_clean/attendance_with_eqi_merged.xlsx") %>%
+  clean_names() %>%
+  filter(category == "present half days", !year %in% c(2020, 2021)) %>%
+  mutate(year = as.numeric(year), percent = as.numeric(percent))
+
+trend_analysis <- term_df %>%
+  group_by(education_region) %>%
+  do(tidy(lm(percent ~ year, data = .))) %>%
+  filter(term == "year") %>%
+  ungroup() %>%
+  mutate(trend_direction = case_when(
+    estimate > 0.1  ~ "Improving",
+    estimate < -0.1 ~ "Declining",
+    TRUE            ~ "Stable"
+  ),
+  trend_significant = p.value < 0.05) %>%
+  rename(slope = estimate, slope_pvalue = p.value)
+```
+
+2. Recent trend only (2022–2024)
+
+```{r}
+term_recent <- read_excel("/Users/tamarabutigan/Desktop/attendance-risk-scoring/data_clean/attendance_with_eqi_merged.xlsx") %>%
+  clean_names() %>%
+  filter(category == "present half days", year %in% c(2022, 2023, 2024)) %>%
+  mutate(year = as.numeric(year), percent = as.numeric(percent))
+
+trend_recent <- term_recent %>%
+  group_by(education_region) %>%
+  do(tidy(lm(percent ~ year, data = .))) %>%
+  filter(term == "year") %>%
+  ungroup() %>%
+  mutate(trend_direction = case_when(
+    estimate > 0.1  ~ "Improving",
+    estimate < -0.1 ~ "Declining",
+    TRUE            ~ "Stable"
+  ),
+  trend_significant = p.value < 0.05) %>%
+  rename(slope = estimate, slope_pvalue = p.value)
+```
+
+## Side-by-Side Comparison of Trends
+
+```{r fig.width=12, fig.height=6, dpi=300}
+plot_long <- trend_analysis %>%
+  ggplot(aes(x = reorder(education_region, slope), y = slope, fill = trend_direction, alpha = trend_significant)) +
+  geom_col() +
+  coord_flip() +
+  scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.5)) +
+  scale_fill_manual(values = c("Improving" = "#66c2a5", "Declining" = "#fc8d62", "Stable" = "#a6d854")) +
+  labs(title = "Long-Term Trend (2011–2024, excl. COVID)", x = NULL, y = "Slope") +
+  theme_minimal()
+
+plot_short <- trend_recent %>%
+  ggplot(aes(x = reorder(education_region, slope), y = slope, fill = trend_direction, alpha = trend_significant)) +
+  geom_col() +
+  coord_flip() +
+  scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.5)) +
+  scale_fill_manual(values = c("Improving" = "#8dd3c7", "Declining" = "#fb8072", "Stable" = "#d9d9d9")) +
+  labs(title = "Recent Trend (2022–2024)", x = NULL, y = "Slope") +
+  theme_minimal()
+
+plot_long + plot_short + plot_layout(ncol = 2)
+```
+
+While the 2022–2024 trend appears to show improving attendance in many regions, this likely reflects a recovery from the sharp pandemic-era declines. The long-term trend (2011–2024, excluding COVID years) is still negative or stable for most regions, indicating that attendance has not returned to pre-COVID levels.This suggests that the recent improvements may be real—but modest—and not yet sufficient to reverse a longer trajectory of disengagement. We explore this assumption in the chart below, comparing 2018 and 2024 attendance levels.
+
+---
+
+## 2018 vs 2024 Attendance Comparison
+
+```{r}
+attendance_compare <- read_excel("/Users/tamarabutigan/Desktop/attendance-risk-scoring/data_clean/attendance_with_eqi_merged.xlsx") %>%
+  clean_names() %>%
+  filter(category == "present half days", year %in% c(2018, 2024)) %>%
+  mutate(year = as.factor(year))
+
+attendance_summary <- attendance_compare %>%
+  group_by(education_region, year) %>%
+  summarise(avg_percent = mean(percent, na.rm = TRUE), .groups = "drop")
+
+attendance_plot <- ggplot(attendance_summary, aes(x = reorder(education_region, avg_percent), y = avg_percent, fill = year)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  scale_fill_manual(values = c("2018" = "#377eb8", "2024" = "#e41a1c")) +
+  labs(
+    title = "Attendance Rates in 2018 vs 2024",
+    subtitle = "Based on term-level attendance percentages (present half days)",
+    x = "Education Region",
+    y = "Average Attendance (%)",
+    fill = "Year"
+  ) +
+  theme_minimal(base_size = 14)
+
+attendance_plot
+```
+
+
+None of the regions have returned to their 2018 attendance levels yet.
+
+---
+
+# Volatility and COVID Impact (Taranaki, Whanganui, Manawatu)
+
+In this section, we focus on the region "Taranaki, Whanganui, Manawatu".
+
+```{r}
+taranaki_attendance <- read_excel("/Users/tamarabutigan/Desktop/attendance-risk-scoring/data_clean/attendance_with_eqi_merged.xlsx") %>%
+  clean_names() %>%
+  filter(education_region == "Taranaki, Whanganui, Manawatu",
+         str_detect(category, "students attending")) %>%
+  mutate(year = as.numeric(year), percent = as.numeric(percent))
+
+cv <- function(x) sd(x) / mean(x)
+
+volatility_compare <- taranaki_attendance %>%
+  group_by(category) %>%
+  summarise(cv_all = cv(percent)) %>%
+  left_join(
+    taranaki_attendance %>%
+      filter(!year %in% c(2020, 2021)) %>%
+      group_by(category) %>%
+      summarise(cv_no_covid = cv(percent)),
+    by = "category"
+  ) %>%
+  pivot_longer(c(cv_all, cv_no_covid), names_to = "period", values_to = "cv") %>%
+  mutate(
+    period = recode(period,
+                    cv_all = "Including COVID (2020–21)",
+                    cv_no_covid = "Excluding COVID (2020–21)"),
+    category = recode(category,
+      "students attending 70percent or less" = "≤ 70%",
+      "students attending more then 70percent up to 80percent" = "70–80%",
+      "students attending more than 80percent up to 90percent" = "80–90%",
+      "students attending more than 90percent" = "> 90%")
+  )
+
+ggplot(volatility_compare, aes(x = category, y = cv, fill = period)) +
+  geom_col(position = position_dodge(width = 0.8)) +
+  labs(
+    title = "Taranaki Attendance Volatility by Band",
+    subtitle = "Coefficient of Variation with/without COVID Years",
+    x = "Attendance Band",
+    y = "Volatility (CV)",
+    fill = "Period"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+---
+
+# Yearly Volatility Trends in Taranaki Region
+
+```{r}
+yearly_cv <- taranaki_attendance %>%
+  group_by(year) %>%
+  summarise(cv_year = cv(percent)) %>%
+  mutate(cv_rolling3 = rollapply(cv_year, width = 3, FUN = mean, fill = NA, align = "right"))
+
+ggplot(yearly_cv, aes(x = year)) +
+  geom_line(aes(y = cv_year, color = "Yearly CV"), size = 1.2) +
+  geom_line(aes(y = cv_rolling3, color = "3-Year Rolling Avg"), linetype = "longdash", size = 1.2) +
+  geom_rect(aes(xmin = 2020, xmax = 2022, ymin = -Inf, ymax = Inf),
+            fill = "#d6eaf8", alpha = 0.05, inherit.aes = FALSE) +
+  annotate("text", x = 2020.5, y = max(yearly_cv$cv_year, na.rm = TRUE) * 1.02,
+           label = "COVID-19 Disruption", color = "#5d6d7e", size = 4) +
+  labs(
+    title = "Volatility Trends in Taranaki Region (2011–2024)",
+    subtitle = "Yearly variation in attendance rates",
+    x = "Year",
+    y = "Volatility (CV)",
+    color = NULL
+  ) +
+  scale_color_manual(values = c("Yearly CV" = "#1f77b4", "3-year rolling avg" = "#ff7f0e")) +
+  theme_minimal()
+```
+
+## Taranaki attendance volatility shows three distinct phases:
+
+- 2016-2019: Steady improvement in stability (volatility dropped from 1.25 to 1.0)
+- 2020-2022: COVID created the most stable period ever (volatility fell to 0.58) as lockdowns affected all schools uniformly
+- 2023-2024: Recovery brought new instability (volatility rose to 0.78) as schools recovered at different rates, creating a "new normal" that's more volatile than the COVID period but more stable than pre-2016
+
+## What this means for Taranaki:
+>The decreasing volatility trend (1.25 → 0.78) suggests Taranaki is likely on track to improve attendance overall because:
+
+- Strong predictor: Volatility is the second-most important factor (37% variance explained)
+- Directional relationship: Lower volatility typically correlates with better attendance outcomes
+- Sustained trend: The improvement isn't just a COVID blip, but a longer-term pattern from 2016-2024
+
+---
+
+# Risk Typology Based on EQI and Volatility
+
+We construct a regional risk score combining EQI and volatility and assign typologies:
+
+```{r}
+df_clean <- read_excel("/Users/tamarabutigan/Desktop/attendance-risk-scoring/data_clean/merged_attendance_eqi.xlsx") %>%
+  mutate(
+    eqi_std = scale(eqi_mean),
+    vol_std = scale(volatility_present),
+    risk_score = 0.63 * eqi_std + 0.37 * vol_std,
+    risk_typology = case_when(
+      eqi_std <= -0.5 & vol_std >= 0.5  ~ "High Risk (Structural + Instability)",
+      eqi_std <= -0.5 & vol_std < 0.5   ~ "Structural Risk",
+      eqi_std > -0.5 & vol_std >= 0.5   ~ "Instability Risk",
+      TRUE                              ~ "Lower Risk"
+    )
+  )
+```
+
+```{r}
+ggplot(df_clean, aes(x = eqi_mean, y = volatility_present, color = risk_typology, label = education_region)) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_text(size = 3, vjust = -1, check_overlap = TRUE, show.legend = FALSE) +  # <-- ADD THIS
+  labs(
+    title = "Regional Risk Typologies",
+    x = "EQI (Mean)",
+    y = "Volatility",
+    color = "Risk Typology"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set2")
+```
+
+### Key Takeaway
+Regions can be differentiated into typologies based on **structural disadvantage and attendance volatility**, helping to target interventions.
+
+---
+
+# Summary
+
+>Attendance volatility (how unpredictable attendance patterns are) explains 37% of student disengagement risk—nearly as important as socioeconomic factors (63%). This makes it a critical lens on attendance not captured by averages.
+
+Key Points:
+
+- No NZ region has returned to pre-COVID attendance levels
+- Post-pandemic recovery created new instability
+- Regions can be classified by combining socioeconomic disadvantage with volatility for targeted interventions
+- School-level data needed—regional analysis masks local differences
+
+>Bottom line: Policymakers can focus on attendance volatility alongside overall rates, using different approaches for EQI-driven versus unpredictable attendance patterns. Volatility becomes a more useful metric with granular, school-level data rather than aggregated regional data.
+

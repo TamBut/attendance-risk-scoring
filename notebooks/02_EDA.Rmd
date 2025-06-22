@@ -1,0 +1,310 @@
+---
+title: "02_EDA"
+author: "Tamara"
+date: "2025-06-16"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Exploratory data analysis
+
+```{r load_data, message=FALSE, warning=FALSE}
+
+# Load libraries
+library(readxl)
+library(dplyr)
+library(GGally)
+library(here)
+
+# Load regional-level dataset
+regional_df <- read_excel(here("data_clean", "merged_attendance_eqi.xlsx"))
+
+glimpse(regional_df)
+
+# Check missing data
+colSums(is.na(regional_df))
+
+# Subseting key variables for the EDA
+eda_vars <- regional_df %>%
+  select(eqi_mean, volatility_present, avg_present, coef_variation) %>%
+  na.omit()
+
+# Correlation matrix
+cor(eda_vars)
+```
+
+```{r message=FALSE, warning=FALSE}
+# Pairwise plots
+ggpairs(eda_vars)
+```
+```{r}
+# Load term-level dataset
+term_df <- read_excel(here("data_clean", "attendance_with_eqi_merged.xlsx"))
+
+# Inspect structure
+glimpse(term_df)
+
+# Basic missing data check
+colSums(is.na(term_df))
+
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+#-----------------------------------------------------------------------
+# LOAD LIBRARIES
+#-----------------------------------------------------------------------
+library(tidyverse)
+library(broom)
+library(readxl)
+library(janitor)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+#-----------------------------------------------------------------------
+# LOAD & PREPARE THE MERGED DATA
+#-----------------------------------------------------------------------
+# 📂 Load the merged dataset
+merged_df <- read_excel(here("data_clean", "attendance_with_eqi_merged.xlsx")) %>%
+  clean_names()
+
+# ✅ Filter to "present half days" 
+term_df <- merged_df %>%
+  filter(category == "present half days") %>%
+  mutate(
+    year = as.numeric(year),
+    percent = as.numeric(percent)
+  )
+
+#-----------------------------------------------------------------------
+# TREND ANALYSIS (percent ~ year)
+#-----------------------------------------------------------------------
+trend_analysis <- term_df %>%
+  group_by(education_region) %>%
+  do(tidy(lm(percent ~ year, data = .))) %>%
+  filter(term == "year") %>%
+  ungroup() %>%
+  mutate(
+    trend_direction = case_when(
+      estimate > 0.1  ~ "Improving",
+      estimate < -0.1 ~ "Declining",
+      TRUE            ~ "Stable"
+    ),
+    trend_significant = p.value < 0.05
+  ) %>%
+  rename(
+    slope = estimate,
+    slope_pvalue = p.value
+  ) %>%
+  arrange(desc(slope))
+
+#-----------------------------------------------------------------------
+# VISUALISING TREND RESULTS
+#-----------------------------------------------------------------------
+plot_title <- "Attendance trend slopes by region (2011–2024)"
+plot_subtitle <- "Based on linear regression (percent ~ year).\nDarker bars are statistically significant (p < 0.05)."
+
+attendance_plot <- ggplot(trend_analysis, aes(x = reorder(education_region, slope), y = slope)) +
+  geom_col(aes(fill = trend_direction, alpha = ifelse(trend_significant, 1.0, 0.5))) +
+  coord_flip() +
+  scale_alpha_identity(guide = "none") +
+  scale_fill_manual(values = c("Improving" = "#66c2a5", "Declining" = "#fc8d62", "Stable" = "#a6d854")) +
+  labs(
+    title = plot_title,
+    subtitle = plot_subtitle,
+    x = "Education region",
+    y = "Annual change in attendance (% points)",
+    fill = "Trend direction"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(panel.grid.major.y = element_blank(), panel.grid.minor.x = element_blank())
+
+print(attendance_plot)
+``` 
+```{r warning=FALSE, echo=FALSE}
+#-----------------------------------------------------------------------
+# CLEAN SUMMARY TABLE
+#-----------------------------------------------------------------------
+summary_table <- trend_analysis %>%
+  select(education_region, slope, slope_pvalue, trend_direction, trend_significant) %>%
+  rename(
+    Region = education_region,
+    `Annual Change (% pts)` = slope,
+    `P-value` = slope_pvalue,
+    `Trend Direction` = trend_direction,
+    `Significant (p<0.05)` = trend_significant
+  ) %>%
+  mutate(
+    `Annual Change (% pts)` = round(`Annual Change (% pts)`, 2),
+    `P-value` = round(`P-value`, 3)
+  )
+
+cat("\n\n--- Summary Table for Reporting ---\n")
+print(summary_table)
+
+
+```
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+# Volatility comparison
+
+
+# Using regional_df for volatility
+volatility_data <- regional_df %>%
+  select(education_region, volatility_present) %>%
+  filter(!education_region %in% c("All", "Auckland"))  # optional exclusions
+
+ggplot(volatility_data, aes(x = reorder(education_region, volatility_present), y = volatility_present)) +
+  geom_col(fill = "#56B4E9") +
+  coord_flip() +
+  labs(
+    title = "Attendance volatility by education region",
+    x = "Education region",
+    y = "Volatility present"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+# Impact of Covid-19 disruption on data and the volatility calculation
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+# Load necessary libraries
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(broom)
+library(ggplot2)
+library(tidyr)
+library(zoo)
+library(patchwork)
+
+# Load and clean the main dataset
+term_df <- read_excel(here("data_clean", "attendance_with_eqi_merged.xlsx")) %>%
+ clean_names() %>%
+ mutate(year = as.numeric(year), percent = as.numeric(percent))
+
+# Filter for Taranaki region and specific attendance bands
+taranaki_attendance <- term_df %>%
+  filter(
+    education_region == "Taranaki, Whanganui, Manawatu",
+    category %in% c(
+      "students attending 70percent or less",
+      "students attending more then 70percent up to 80percent",
+      "students attending more than 80percent up to 90percent",
+      "students attending more than 90percent"
+    )
+  ) %>%
+  mutate(year = as.numeric(year), percent = as.numeric(percent))
+
+# Define coefficient of variation function
+cv <- function(x) sd(x) / mean(x)
+
+# Calculate volatility including all years
+volatility_all <- taranaki_attendance %>%
+  group_by(category) %>%
+  summarise(cv_all = cv(percent), .groups = "drop")
+
+# Calculate volatility excluding COVID years 2020 and 2021
+attendance_no_covid <- taranaki_attendance %>%
+  filter(!year %in% c(2020, 2021))
+
+volatility_no_covid <- attendance_no_covid %>%
+  group_by(category) %>%
+  summarise(cv_no_covid = cv(percent), .groups = "drop")
+
+# Combine for comparison
+volatility_compare <- left_join(volatility_all, volatility_no_covid, by = "category")
+
+# Reshape data for plotting
+volatility_long <- volatility_compare %>%
+  pivot_longer(cols = c(cv_all, cv_no_covid),
+               names_to = "period",
+               values_to = "cv") %>%
+  mutate(
+    period = recode(period,
+                    cv_all = "Including COVID (2020–21)",
+                    cv_no_covid = "Excluding COVID (2020–21)"),
+    category = recode(category,
+      "students attending 70percent or less" = "≤ 70%",
+      "students attending more then 70percent up to 80percent" = "70–80%",
+      "students attending more than 80percent up to 90percent" = "80–90%",
+      "students attending more than 90percent" = "> 90%"
+    )
+  )
+
+# Plot volatility comparison
+volatility_plot <- ggplot(volatility_long, aes(x = category, y = cv, fill = period)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  labs(
+    title = "Volatility of Attendance Bands (Coefficient of Variation)",
+    subtitle = "Comparison Including and Excluding COVID Years (2020–21)",
+    x = "Attendance Band",
+    y = "Coefficient of Variation (CV)",
+    fill = "Period"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 25, hjust = 1),
+    legend.position = "top"
+  )
+
+print(volatility_plot)
+
+```
+
+
+# Taranaki volatility drilldown
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+# 3. Volatility trends over time: yearly CV (across all bands)
+yearly_cv <- taranaki_attendance %>%
+  group_by(year) %>%
+  summarise(cv_year = cv(percent)) %>%
+  arrange(year) %>%
+  mutate(cv_rolling3 = zoo::rollapply(cv_year, width = 3, FUN = mean, fill = NA, align = "right"))
+
+ggplot(yearly_cv, aes(x = year)) +
+  # Main lines
+  geom_line(aes(y = cv_year, color = "Yearly CV"), size = 1.2) +
+  geom_line(aes(y = cv_rolling3, color = "3-Year Rolling Avg"), linetype = "longdash", size = 1.2) +
+
+  # COVID shading using a light blue-gray
+  geom_rect(aes(xmin = 2020, xmax = 2022, ymin = -Inf, ymax = Inf),
+            fill = "#d6eaf8", alpha = 0.05, inherit.aes = FALSE) +
+
+  # COVID label
+  annotate("text", x = 2020.5, y = max(yearly_cv$cv_year, na.rm = TRUE) * 1.02,
+           label = "COVID-19 Disruption", color = "#5d6d7e", size = 4, fontface = "italic") +
+
+  # Extending x-axis to fit labels
+  scale_x_continuous(
+    limits = c(min(yearly_cv$year), max(yearly_cv$year) + 1),
+    breaks = seq(min(yearly_cv$year), max(yearly_cv$year), 1)
+  ) +
+
+  # contrasting line colors
+  scale_color_manual(
+    values = c("Yearly CV" = "#1f77b4", "3-year rolling avg" = "#ff7f0e")
+  ) +
+
+  labs(
+    title = "Volatility in attendance in Taranaki, Whanganui, Manawatu (2011–2024)",
+    subtitle = "Yearly coefficient of variation in attendance rates, with 3-year rolling average",
+    x = "Year",
+    y = "Attendance volatility (CV)",
+    color = NULL
+  ) +
+
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",
+    legend.text = element_text(size = 12),
+    plot.title = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.margin = margin(10, 20, 10, 10)
+  )
+```
+
+

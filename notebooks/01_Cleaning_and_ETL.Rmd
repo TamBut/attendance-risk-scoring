@@ -1,0 +1,156 @@
+---
+title: "01_Cleaning_and_ETL"
+author: "Tamara"
+date: "2025-06-15"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+This notebook cleans and merges attendance, volatility, and school Equity Index (EQI) data for attendance risk analysis.
+
+**Goals:**
+- Predict attendance risk using volatility (attendance SD) and EQI
+- Compare regions and analyze pre/post-COVID patterns
+- Assess explanatory power of equity and volatility metrics
+
+---
+
+# 1. Load Required Packages
+
+```{r load-packages, message=FALSE}
+library(readxl)
+library(dplyr)
+library(writexl)
+library(here)
+library(readr)
+```
+
+# 2. Load raw attendance and volatility data
+```{r}
+# File paths
+attendance_file <- here("data_clean", "Regular-attendance-data-cleaned.xlsx")
+volatility_file <- here("data_clean", "data_with_volatility.xlsx")
+
+# Load datasets
+attendance_df <- read_excel(attendance_file)
+volatility_df <- read_excel(volatility_file)
+
+# Preview the structure of the dataframes
+glimpse(attendance_df)
+glimpse(volatility_df)
+```
+# Merge attendance with volatility data
+
+```{r}
+# Merge datasets on education_region
+merged_df <- attendance_df %>%
+  left_join(volatility_df, by = "education_region")
+
+# Preview merged dataset
+head(merged_df)
+```
+# Save merged attendance-volatility data
+```{r}
+output_file <- here("data_clean", "attendance_with_volatility_merged.xlsx")
+write_xlsx(merged_df, output_file)
+```
+# Load and prepare EQI data
+
+```{r, message=FALSE}
+# File paths for EQI and school directory data
+eqi_file <- here("data_raw", "School-EQI-numbers-2023-2025.xlsx")
+school_directory_file <- here("data_raw", "directory.csv")
+
+# Load EQI data (skip first row for headers)
+eqi_df <- read_excel(eqi_file, skip = 1)
+
+# Load school directory data (skip initial rows for headers)
+directory_df <- read_csv(school_directory_file, skip = 16)
+
+# Rename columns in EQI data for consistency
+eqi_df <- eqi_df %>%
+  rename(
+    School_ID = `School Number`,
+    School_Name = `School Name`,
+    EQI_2023 = `2023 - School Equity Index Number`,
+    EQI_2024 = `2024 - School Equity Index Number`,
+    EQI_2025 = `2025 - School Equity Index Number`
+  ) %>%
+  mutate(School_Name_clean = trimws(tolower(School_Name)))
+
+# Clean school names in directory data
+directory_df <- directory_df %>%
+  mutate(School_Name_clean = trimws(tolower(`School Name`)))
+
+# Map regional councils to education regions (hardcoding these)
+region_map <- c(
+  "Northland Region" = "Tai Tokerau",
+  "Auckland Region" = "Tāmaki Makaurau",
+  "Bay of Plenty Region" = "Bay of Plenty, Waiariki",
+  "Waikato Region" = "Waikato",
+  "Manawatū-Whanganui Region" = "Taranaki, Whanganui, Manawatū",
+  "Hawke's Bay Region" = "Hawke's Bay, Tairāwhiti",
+  "Taranaki Region" = "Taranaki, Whanganui, Manawatū",
+  "Whanganui Region" = "Taranaki, Whanganui, Manawatū",
+  "Canterbury Region" = "Canterbury, Chatham Islands",
+  "Chatham Islands" = "Canterbury, Chatham Islands",
+  "Otago Region" = "Otago, Southland",
+  "Southland Region" = "Otago, Southland",
+  "Gisborne Region" = "Hawke's Bay, Tairāwhiti",
+  "Marlborough Region" = "Nelson, Marlborough, West Coast",
+  "Tasman Region" = "Nelson, Marlborough, West Coast",
+  "Nelson Region" = "Nelson, Marlborough, West Coast",
+  "West Coast Region" = "Nelson, Marlborough, West Coast",
+  "Wellington Region" = "Wellington"
+)
+
+directory_df <- directory_df %>%
+  mutate(education_region = region_map[`Regional Council`])
+
+# Join EQI data with directory on cleaned school names
+merged_eqi_df <- eqi_df %>%
+  inner_join(directory_df, by = "School_Name_clean") %>%
+  select(School_ID, School_Name, education_region, EQI_2023, EQI_2024, EQI_2025)
+
+# Preview cleaned EQI data
+head(merged_eqi_df)
+
+# Save cleaned school-region EQI data
+write_xlsx(merged_eqi_df, here("data_clean", "school_region_EQI.xlsx"))
+```
+# Merge attendance and volatility with regional EQI
+```{r}
+# Load merged attendance-volatility dataset
+
+attendance_vol_df <- read_excel(here("data_clean", "attendance_with_volatility_merged.xlsx"))
+
+
+# Load regional mean EQI data
+
+eqi_region_df <- read_excel(here("data_clean", "eqi_by_region.xlsx"))
+
+
+# Merge on education_region
+final_merged_df <- attendance_vol_df %>%
+  left_join(eqi_region_df, by = "education_region")
+
+# Preview final dataset
+head(final_merged_df)
+
+# Save final merged dataset for analysis
+write_xlsx(final_merged_df, here("data_clean", "merged_attendance_eqi.xlsx"))
+
+```
+## Files Created
+
+- **attendance_with_volatility_merged.xlsx** - Attendance + volatility data
+- **school_region_EQI.xlsx** - School-level EQI with regions  
+- **eqi_by_region.xlsx** - Regional EQI averages
+- **merged_attendance_eqi.xlsx** - Final dataset for analysis

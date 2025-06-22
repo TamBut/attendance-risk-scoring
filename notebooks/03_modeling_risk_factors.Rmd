@@ -1,0 +1,141 @@
+---
+title: "03_modeling_risk_factors"
+author: "Tamara"
+date: "2025-06-15"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+# Load required packages
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(broom)
+library(writexl)
+library(ggrepel)
+library(here)
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+```{r}
+# Loading fully merged dataset
+merged_file <- here("data_clean", "attendance_with_eqi_merged.xlsx")
+merged_attendance_eqi <- read_excel(merged_file)
+```
+
+
+### In this section, I use a series of linear models to understand how **socioeconomic need (EQI)** and **volatility in attendance** jointly predict average attendance. These models build upon one another, helping to answer: How much better can we predict attendance when we include volatility as a risk factor?
+
+### Step 1: Base Model – Only EQI
+```{r}
+# EQI-only model
+model_eqi <- lm(avg_present ~ eqi_mean, data = merged_attendance_eqi)
+summary(model_eqi)$r.squared
+```
+#### This shows a strong negative association:
+- **higher EQI scores (greater socioeconomic need) predict lower attendance**. 
+- The model explains about **63.5%** of the variance in attendance.
+
+### Step 2: Adding volatility to the model
+```{r}
+model_eqi_vol <- lm(avg_present ~ eqi_mean + volatility_present, data = merged_attendance_eqi)
+summary(model_eqi_vol)$r.squared
+```
+
+#### Volatility is a powerful predictor: students in more **unstable attendance environments** tend to have significantly lower average attendance.
+- The model fit improves dramatically: **R² increases from 63.5% to 94.4%**.
+- This shows that **volatility is not just noise — it explains an additional 30.9% of the variance** beyond EQI.
+
+### Step 3: Adding the interaction
+```{r}
+model_interaction <- lm(avg_present ~ eqi_mean * volatility_present, data = merged_attendance_eqi)
+summary(model_interaction)$r.squared
+```
+#### This interaction is significant and improves model fit again (**R² = 95.4%**). It suggests that the **impact of EQI on attendance is amplified in more volatile regions**. In other words:
+> In regions with unstable attendance, socioeconomic disadvantage has an even stronger link to low attendance.
+
+
+```{r}
+# Compare models using ANOVA
+anova(model_eqi, model_eqi_vol, model_interaction)
+
+
+r2_table <- tibble(
+  Model = c("EQI only", "EQI + Volatility", "EQI + Interaction"),
+  R_squared = c(summary(model_eqi)$r.squared,
+                summary(model_eqi_vol)$r.squared,
+                summary(model_interaction)$r.squared)
+)
+
+print(r2_table)
+
+
+
+```
+
+```{r}
+# tidy model summaries
+eqi_only_tidy <- tidy(model_eqi)
+eqi_vol_tidy <- tidy(model_eqi_vol)
+interaction_tidy <- tidy(model_interaction)
+
+# Display outputs
+eqi_only_tidy
+eqi_vol_tidy
+interaction_tidy
+
+```
+# Visualising attendance vs volatility
+```{r}
+ggplot(merged_attendance_eqi, aes(x = volatility_present, y = avg_present)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Attendance vs Volatility",
+       x = "Volatility", y = "Average Attendance") +
+  theme_minimal()
+```
+
+#### This scatter plot visualizes the relationship between attendance volatility and average attendance across regions. Each point represents a region's average attendance rate plotted against how volatile their attendance is over time. The linear trend line (fitted using linear regression) highlights the overall pattern in the data.
+
+
+
+# Volatility as a moderator of socioeconomic attendance risk
+```{r, warning=FALSE}
+
+merged_df <- read_excel(here("data_clean", "merged_attendance_eqi.xlsx"))
+region_pairs <- merged_df %>%
+  arrange(eqi_mean) %>%
+  mutate(
+    eqi_diff = abs(eqi_mean - lag(eqi_mean, 1)),
+    attendance_diff = abs(avg_present - lag(avg_present, 1))
+  ) %>%
+  filter(!is.na(eqi_diff)) %>%
+  arrange(eqi_diff, desc(attendance_diff)) %>%
+  slice(1:2)
+
+# Scatter plot: EQI vs Attendance, colored by Volatility
+ggplot(merged_df, aes(x = eqi_mean, y = avg_present)) +
+  geom_point(aes(color = volatility_present, size = coef_variation), alpha = 0.7) +
+  scale_color_gradient(low = "blue", high = "red", name = "Volatility Present") +
+  scale_size_continuous(name = "Coefficient of Variation") +
+  geom_text_repel(aes(label = education_region),
+                  size = 3,
+                  box.padding = 0.3,
+                  point.padding = 0.5,
+                  max.overlaps = Inf) +
+  coord_cartesian(ylim = c(min(merged_df$avg_present) - 0.2, 
+                           max(merged_df$avg_present) + 0.2)) +
+  labs(
+    title = "Attendance vs Socioeconomic Index by Region",
+    subtitle = "Highlighting similar EQI regions with contrasting attendance outcomes",
+    x = "EQI Mean (Socioeconomic Index)",
+    y = "Average Attendance",
+    caption = "Point color: Volatility; Size: Attendance variation"
+  ) +
+  theme_minimal()
+```
+
+#### This analysis explores how volatility moderates the relationship between socioeconomic status (measured by the EQI mean) and average attendance across regions. The visualisation reveals that regions with similar socioeconomic profiles can have quite different attendance performances, influenced by volatility. It suggests that attendance volatility acts as a moderator, affecting how socioeconomic risk translates into actual attendance outcomes.

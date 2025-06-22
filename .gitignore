@@ -1,0 +1,11 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Data files
+data_raw/
+data_clean/
+*.xlsx
+*.csv
+.DS_Store

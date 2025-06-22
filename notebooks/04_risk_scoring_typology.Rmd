@@ -1,0 +1,112 @@
+---
+title: "04_risk_scoring_typology"
+author: "Tamara"
+date: "2025-06-14"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(readxl)
+library(here)
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+## Loading the data (merged)
+
+```{r}
+
+df_clean <- read_excel(here("data_clean", "merged_attendance_eqi.xlsx"))
+
+glimpse(df_clean)
+```
+
+# STEP 1: Standardise predictors
+# Standardise EQI and Volatility to z-scores
+```{r}
+df_clean <- df_clean %>%
+  mutate(
+    eqi_std = as.numeric(scale(eqi_mean)),
+    vol_std = as.numeric(scale(volatility_present))
+  )
+```
+# STEP 2: Assigning weighted risk score based on variance explained in 03_modeling_risk_factors (~63% EQI, ~37% volatility)
+```{r}
+df_clean <- df_clean %>%
+  mutate(
+    risk_score = (0.63 * eqi_std) + (0.37 * vol_std)
+  )
+```
+# STEP 3: Quick check of risk score distribution
+```{r}
+summary(df_clean$risk_score)
+```
+
+# STEP 4: Validating the association between risk score and attendance using a linear model
+
+```{r}
+model_lin <- lm(avg_present ~ risk_score, data = df_clean)
+summary(model_lin)
+```
+
+# STEP 5: Visualise relationship
+
+```{r, warning=FALSE}
+ggplot(df_clean, aes(x = risk_score, y = avg_present)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(title = "Attendance vs Weighted Risk Score",
+       x = "Weighted Risk Score",
+       y = "Average Attendance") +
+  theme_minimal()
+```
+
+# STEP 6: Building the typology classification. 
+## Thresholds were chosen as ±0.5 standard deviations from the mean, capturing regions meaningfully above or below average. This results in four interpretable categories:
+
+### High risk (structural + instability): High EQI disadvantage and high attendance volatility.
+### Structural risk: Disadvantaged but attendance is relatively stable.
+### Instability risk: Less disadvantaged, but engagement fluctuates.
+### Lower risk: Relatively advantaged and stable attendance.
+
+```{r}
+df_clean <- df_clean %>%
+  mutate(
+    risk_typology = case_when(
+      eqi_std <= -0.5 & vol_std >= 0.5  ~ "High Risk (Structural + Instability)",
+      eqi_std <= -0.5 & vol_std < 0.5   ~ "Structural Risk",
+      eqi_std > -0.5 & vol_std >= 0.5   ~ "Instability Risk",
+      eqi_std > -0.5 & vol_std < 0.5    ~ "Lower Risk"
+    ),
+    risk_typology = factor(risk_typology, levels = c("High Risk (Structural + Instability)", "Structural Risk", "Instability Risk", "Lower Risk"))
+  )
+```
+
+# STEP 7: Summary Table for README (NA values are Auckland and All)
+```{r}
+typology_summary <- df_clean %>%
+  group_by(risk_typology) %>%
+  summarise(
+    mean_attendance = round(mean(avg_present), 1),
+    count = n()
+  )
+typology_summary
+```
+
+# STEP 8: Visualization of the typology from step 6
+```{r, warning=FALSE}
+ggplot(df_clean, aes(x = eqi_mean, y = volatility_present, color = risk_typology, label = education_region)) +
+  geom_point(size = 3, alpha = 0.7) +
+  geom_text(size = 3, vjust = -1, check_overlap = TRUE) +
+  labs(
+    title = "Regional Risk Typologies",
+    x = "EQI (Mean)",
+    y = "Volatility",
+    color = "Risk Typology"
+  ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set2")
+```
