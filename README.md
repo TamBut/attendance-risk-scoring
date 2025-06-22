@@ -1,6 +1,6 @@
 # Attendance and Volatility in Aotearoa
 
-This project analyzes 13 years of regional attendance data (2011-2024) to identify patterns of attendance instability that can be combined with traditional equity-based metrics. The resulting framework provides education policymakers with a data-driven approach to prioritise intervention resources and identify emerging risks before they become critical.
+This project analyses 13 years of regional attendance data (2011-2024) to identify patterns of attendance instability that can be combined with traditional equity-based metrics. The resulting framework provides education policymakers with a data-driven approach to prioritise intervention resources and identify emerging risks before they become critical.
 
 > **Problem**: Focusing intervention strategies on socioeconomic disadvantage risks potentially overlooking at-risk regions with different risk profiles.
 
